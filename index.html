@@ -6,61 +6,88 @@
   <title>Index</title>
   <style>
     body { font-family: system-ui, sans-serif; max-width: 40rem; margin: 2rem auto; padding: 0 1rem; }
-    h2 { margin-top: 2rem; text-transform: capitalize; }
+    nav { margin: 1rem 0; }
     ul { padding-left: 1.2rem; }
     .error { color: #b00020; }
   </style>
 </head>
 <body>
   <h1>Index</h1>
-  <div id="sections"></div>
+  <nav id="crumbs"></nav>
+  <ul id="list"></ul>
+  <p id="status"></p>
 
   <script>
-    const FOLDERS = ['projects', 'saves'];
+    // Repo to list. On GitHub Pages (<owner>.github.io/<repo>/) this is detected; otherwise the fallback is used.
+    const FALLBACK = { owner: 'AdrielRodrigues', repo: 'projects' };
+    const ROOTS = ['projects', 'saves'];  // top-level folders shown at the start
 
-    // Reads the server's directory listing and returns the file links in it.
-    async function listFolder(folder) {
-      const res = await fetch(folder + '/');
+    const host = location.hostname.match(/^(.+)\.github\.io$/);
+    const OWNER = host ? host[1] : FALLBACK.owner;
+    const REPO = host ? (location.pathname.split('/')[1] || FALLBACK.repo) : FALLBACK.repo;
+
+    const $ = id => document.getElementById(id);
+    const encodePath = p => p.split('/').map(encodeURIComponent).join('/');
+
+    async function listDir(path) {
+      const res = await fetch(`https://api.github.com/repos/${OWNER}/${REPO}/contents/${encodePath(path)}`);
+      if (res.status === 403 || res.status === 429) throw new Error('GitHub API rate limit reached, try again later');
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-      const doc = new DOMParser().parseFromString(await res.text(), 'text/html');
-      return [...doc.querySelectorAll('a[href]')]
-        .map(a => a.getAttribute('href'))
-        .filter(href => !href.startsWith('?') && !href.startsWith('/') && !href.startsWith('#')
-                        && !href.includes('://') && !href.startsWith('..') && !href.endsWith('/'))
-        .map(href => decodeURIComponent(href));
+      const items = await res.json();
+      return items.sort((a, b) => (a.type === 'dir') !== (b.type === 'dir') ? (a.type === 'dir' ? -1 : 1) : a.name.localeCompare(b.name));
+    }
+
+    function renderCrumbs(path) {
+      const nav = $('crumbs');
+      nav.replaceChildren();
+      const parts = path ? path.split('/') : [];
+      const add = (label, target) => {
+        if (nav.childNodes.length) nav.append(' / ');
+        if (target === null) { nav.append(label); return; }
+        const a = document.createElement('a');
+        a.href = '#' + target;
+        a.textContent = label;
+        nav.append(a);
+      };
+      add('home', parts.length ? '' : null);
+      parts.forEach((part, i) => add(part, i === parts.length - 1 ? null : parts.slice(0, i + 1).join('/')));
+    }
+
+    function addItem(label, href) {
+      const li = document.createElement('li');
+      const a = document.createElement('a');
+      a.href = href;
+      a.textContent = label;
+      li.append(a);
+      $('list').append(li);
     }
 
     async function render() {
-      const root = document.getElementById('sections');
-      for (const folder of FOLDERS) {
-        const section = document.createElement('section');
-        section.innerHTML = `<h2>${folder}</h2>`;
-        root.append(section);
-        try {
-          const files = await listFolder(folder);
-          if (!files.length) {
-            section.append('Empty.');
-            continue;
-          }
-          const ul = document.createElement('ul');
-          for (const name of files) {
-            const a = document.createElement('a');
-            a.href = `${folder}/${encodeURIComponent(name)}`;
-            a.textContent = name;
-            const li = document.createElement('li');
-            li.append(a);
-            ul.append(li);
-          }
-          section.append(ul);
-        } catch (err) {
-          const p = document.createElement('p');
-          p.className = 'error';
-          p.textContent = `Could not list "${folder}" (${err.message}). Serve this folder over HTTP, e.g. "python3 -m http.server", instead of opening the file directly.`;
-          section.append(p);
+      const path = decodeURIComponent(location.hash.slice(1)).replace(/^\/+|\/+$/g, '');
+      renderCrumbs(path);
+      $('list').replaceChildren();
+      $('status').className = '';
+      $('status').textContent = '';
+
+      if (!path) {
+        ROOTS.forEach(r => addItem(r + '/', '#' + encodeURIComponent(r)));
+        return;
+      }
+      $('status').textContent = 'Loading...';
+      try {
+        const items = await listDir(path);
+        $('status').textContent = items.length ? '' : 'Empty.';
+        for (const item of items) {
+          if (item.type === 'dir') addItem(item.name + '/', '#' + encodePath(item.path));
+          else addItem(item.name, encodePath(item.path));  // relative link, served by Pages
         }
+      } catch (err) {
+        $('status').className = 'error';
+        $('status').textContent = `Could not list "${path}": ${err.message}`;
       }
     }
 
+    addEventListener('hashchange', render);
     render();
   </script>
 </body>
