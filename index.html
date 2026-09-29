@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Index</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 40rem; margin: 2rem auto; padding: 0 1rem; }
+    h2 { margin-top: 2rem; text-transform: capitalize; }
+    ul { padding-left: 1.2rem; }
+    .error { color: #b00020; }
+  </style>
+</head>
+<body>
+  <h1>Index</h1>
+  <div id="sections"></div>
+
+  <script>
+    const FOLDERS = ['projects', 'saves'];
+
+    // Reads the server's directory listing and returns the file links in it.
+    async function listFolder(folder) {
+      const res = await fetch(folder + '/');
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      const doc = new DOMParser().parseFromString(await res.text(), 'text/html');
+      return [...doc.querySelectorAll('a[href]')]
+        .map(a => a.getAttribute('href'))
+        .filter(href => !href.startsWith('?') && !href.startsWith('/') && !href.startsWith('#')
+                        && !href.includes('://') && !href.startsWith('..') && !href.endsWith('/'))
+        .map(href => decodeURIComponent(href));
+    }
+
+    async function render() {
+      const root = document.getElementById('sections');
+      for (const folder of FOLDERS) {
+        const section = document.createElement('section');
+        section.innerHTML = `<h2>${folder}</h2>`;
+        root.append(section);
+        try {
+          const files = await listFolder(folder);
+          if (!files.length) {
+            section.append('Empty.');
+            continue;
+          }
+          const ul = document.createElement('ul');
+          for (const name of files) {
+            const a = document.createElement('a');
+            a.href = `${folder}/${encodeURIComponent(name)}`;
+            a.textContent = name;
+            const li = document.createElement('li');
+            li.append(a);
+            ul.append(li);
+          }
+          section.append(ul);
+        } catch (err) {
+          const p = document.createElement('p');
+          p.className = 'error';
+          p.textContent = `Could not list "${folder}" (${err.message}). Serve this folder over HTTP, e.g. "python3 -m http.server", instead of opening the file directly.`;
+          section.append(p);
+        }
+      }
+    }
+
+    render();
+  </script>
+</body>
+</html>
